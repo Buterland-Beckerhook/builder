@@ -40,8 +40,16 @@ func (b *Builder) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !b.verifySignature(r) {
+	body := make([]byte, r.ContentLength)
+	_, _ = r.Body.Read(body)
+
+	if !b.verifySignature(r, body) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !b.shouldTriggerBuild(body) {
+		slog.Info("Webhook received but branch doesn't match, skipping build")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -51,7 +59,7 @@ func (b *Builder) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (b *Builder) verifySignature(r *http.Request) bool {
+func (b *Builder) verifySignature(r *http.Request, body []byte) bool {
 	if b.cfg.WebhookSecret == "" {
 		return true // Skip verification if no secret is set
 	}
@@ -61,12 +69,23 @@ func (b *Builder) verifySignature(r *http.Request) bool {
 		return false
 	}
 
-	body := make([]byte, r.ContentLength)
-	_, _ = r.Body.Read(body)
-
 	mac := hmac.New(sha256.New, []byte(b.cfg.WebhookSecret))
 	mac.Write(body)
 	expectedSignature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(signature), []byte(expectedSignature))
+}
+
+func (b *Builder) shouldTriggerBuild(body []byte) bool {
+	var payload struct {
+		Ref string `json:"ref"`
+	}
+
+	if err := json.Unmarshal(body, &payload); err != nil {
+		slog.Warn("Failed to parse webhook payload", "error", err)
+		return true
+	}
+
+	expectedRef := "refs/heads/" + b.cfg.RepoBranch
+	return payload.Ref == expectedRef
 }
