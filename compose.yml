@@ -23,6 +23,8 @@ services:
       - traefik.http.routers.bb-builder-sec.entrypoints=https
       - traefik.http.routers.bb-builder-sec.rule=Host(`builder.buterland-beckerhook.de`)
       - traefik.http.routers.bb-builder-sec.tls=true
+      - traefik.http.routers.bb-builder-sec.tls.options=secure-tls@file
+      - traefik.http.routers.bb-builder-sec.tls.certresolver=le
       - traefik.http.services.bb-builder.loadbalancer.server.port=8080
     healthcheck:
       test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health" ]
@@ -57,12 +59,19 @@ services:
       - traefik.http.routers.bb-site.middlewares=https-redirect@file
       - traefik.http.routers.bb-site-sec.entrypoints=https
       - traefik.http.routers.bb-site-sec.rule=Host(`buterland-beckerhook.de`, `www.buterland-beckerhook.de`)
+      - traefik.http.routers.bb-site-sec.tls=true
+      - traefik.http.routers.bb-site-sec.tls.options=secure-tls@file
+      - traefik.http.routers.bb-site-sec.tls.certresolver=le
+      - traefik.http.middlewares.bb-site-redirectregex.redirectregex.regex=^https?://www.buterland-beckerhook.de(/.*)
+      - traefik.http.middlewares.bb-site-redirectregex.redirectregex.replacement=https://buterland-beckerhook.de$${1}
+      - traefik.http.middlewares.bb-site-redirectregex.redirectregex.permanent=true
       - traefik.http.services.bb-site.loadbalancer.server.port=80
     healthcheck:
       test: [ "CMD", "nginx", "-t" ]
       interval: 30s
       timeout: 3s
       retries: 3
+      start_period: 5s
     deploy:
       resources:
         limits:
