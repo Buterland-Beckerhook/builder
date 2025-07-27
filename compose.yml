@@ -1,0 +1,80 @@
+services:
+  bb-builder-prod:
+    build: .
+    container_name: bb-builder-prod
+    env_file:
+      - .env
+    environment:
+      - WORKDIR=/app/workdir
+      - OUTPUT_DIR=/app/public
+      - SERVER_ADDRESS=:8080
+    volumes:
+      - hugo_workdir:/app/workdir
+      - hugo_public:/app/public
+    restart:
+      unless-stopped
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.bb-builder.entrypoints=http
+      - traefik.http.routers.bb-builder.rule=Host(`builder.buterland-beckerhook.de`)
+      - traefik.http.routers.bb-builder.middlewares=https-redirect@file
+      - traefik.http.routers.bb-builder-sec.entrypoints=https
+      - traefik.http.routers.bb-builder-sec.rule=Host(`builder.buterland-beckerhook.de`)
+      - traefik.http.routers.bb-builder-sec.tls=true
+      - traefik.http.services.bb-builder.loadbalancer.server.port=8080
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    tmpfs:
+      - /tmp:size=3G,mode=1777
+
+  nginx-prod:
+    image: nginx:latest
+    container_name: nginx-prod
+    volumes:
+      - hugo_public:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    restart:
+      unless-stopped
+    depends_on:
+      - bb-builder-prod
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.bb-site.entrypoints=http
+      - traefik.http.routers.bb-site.rule=Host(`buterland-beckerhook.de`, `www.buterland-beckerhook.de`)
+      - traefik.http.routers.bb-site.middlewares=https-redirect@file
+      - traefik.http.routers.bb-site-sec.entrypoints=https
+      - traefik.http.routers.bb-site-sec.rule=Host(`buterland-beckerhook.de`, `www.buterland-beckerhook.de`)
+      - traefik.http.routers.bb-site-sec.middlewares=bb-redirectregex
+      - traefik.http.services.bb-site.loadbalancer.server.port=80
+    healthcheck:
+      test: [ "CMD", "nginx", "-t" ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.2'
+volumes:
+  hugo_workdir:
+  hugo_public:
+
+networks:
+  proxy:
+    external: true
