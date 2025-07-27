@@ -3,9 +3,13 @@ package service
 import (
 	"bb-builder/internal/config"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -114,7 +118,14 @@ func (b *Builder) buildSite() error {
 	start := time.Now()
 	slog.Info("Building site", "commit", b.lastCommit)
 
-	args := append([]string{"--destination", b.cfg.OutputDir}, b.cfg.HugoArgs...)
+	buildID := fmt.Sprintf("build-%d", time.Now().Unix())
+	buildDir := filepath.Join(b.cfg.OutputDir, ".builds", buildID)
+
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		return err
+	}
+
+	args := append([]string{"--destination", buildDir}, b.cfg.HugoArgs...)
 
 	cmd := exec.Command("hugo", args...)
 	cmd.Dir = b.cfg.WorkDir
@@ -123,6 +134,7 @@ func (b *Builder) buildSite() error {
 	duration := time.Since(start)
 
 	if err != nil {
+		_ = os.RemoveAll(buildDir)
 		slog.Error("Failed to build site",
 			"duration", duration,
 			"output", string(output),
@@ -131,12 +143,57 @@ func (b *Builder) buildSite() error {
 		return err
 	}
 
-	slog.Info("Site built successfully",
-		"duration", duration,
-		"arguments", args,
-		"output", string(output),
-	)
+	if err := b.atomicSwap(buildDir); err != nil {
+		_ = os.RemoveAll(buildDir)
+		return err
+	}
+
+	go b.cleanupOldBuilds()
+
+	slog.Info("Site built successfully", "duration", duration, "buildID", buildID,
+		"args", args)
 	return nil
+}
+
+func (b *Builder) atomicSwap(newBuildDir string) error {
+	currentLink := filepath.Join(b.cfg.OutputDir, "current")
+	tempLink := filepath.Join(b.cfg.OutputDir, "current.tmp")
+
+	buildID := filepath.Base(newBuildDir)
+	relativePath := filepath.Join(".builds", buildID)
+
+	if err := os.Symlink(relativePath, tempLink); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tempLink, currentLink); err != nil {
+		_ = os.Remove(tempLink)
+		return err
+	}
+
+	return nil
+}
+
+func (b *Builder) cleanupOldBuilds() {
+	buildsDir := filepath.Join(b.cfg.OutputDir, ".builds")
+	entries, err := os.ReadDir(buildsDir)
+	if err != nil {
+		return
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() > entries[j].Name()
+	})
+
+	for i := 2; i < len(entries); i++ {
+		oldBuild := filepath.Join(buildsDir, entries[i].Name())
+		err := os.RemoveAll(oldBuild)
+		if err != nil {
+			slog.Error("Failed to remove old build", "path", oldBuild, "error", err)
+			continue
+		}
+		slog.Info("Cleaned up old build", "path", oldBuild)
+	}
 }
 
 func (b *Builder) startPolling() {
