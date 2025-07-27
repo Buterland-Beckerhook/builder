@@ -180,4 +180,5 @@ Temporary Items
 # iCloud generated files
 *.icloud
 
+.env
 test/

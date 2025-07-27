@@ -34,7 +34,7 @@ services:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: '2'
     tmpfs:
       - /tmp:size=3G,mode=1777
 
